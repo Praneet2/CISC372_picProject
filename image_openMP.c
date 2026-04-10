@@ -2,11 +2,7 @@
 #include <stdint.h>
 #include <time.h>
 #include <string.h>
-#include <pthread.h>
 #include "image.h"
-
-/* Number of worker threads for convolution (each handles a slice of rows). */
-#define NUM_THREADS 4
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -55,54 +51,21 @@ uint8_t getPixelValue(Image* srcImage,int x,int y,int bit,Matrix algorithm){
     return result;
 }
 
-typedef struct {
-    Image *srcImage;
-    Image *destImage;
-    Matrix algorithm;
-    int startRow;
-    int endRow;
-} ConvoluteThreadArgs;
-
-static void *convolute_worker(void *arg) {
-    ConvoluteThreadArgs *a = (ConvoluteThreadArgs *)arg;
-    int row, pix, bit;
-    for (row = a->startRow; row < a->endRow; row++) {
-        for (pix = 0; pix < a->srcImage->width; pix++) {
-            for (bit = 0; bit < a->srcImage->bpp; bit++) {
-                a->destImage->data[Index(pix, row, a->srcImage->width, bit, a->srcImage->bpp)] =
-                    getPixelValue(a->srcImage, pix, row, bit, a->algorithm);
-            }
-        }
-    }
-    return NULL;
-}
-
 //convolute:  Applies a kernel matrix to an image
 //Parameters: srcImage: The image being convoluted
 //            destImage: A pointer to a  pre-allocated (including space for the pixel array) structure to receive the convoluted image.  It should be the same size as srcImage
 //            algorithm: The kernel matrix to use for the convolution
 //Returns: Nothing
 void convolute(Image* srcImage,Image* destImage,Matrix algorithm){
-    pthread_t threads[NUM_THREADS];
-    ConvoluteThreadArgs args[NUM_THREADS];
-    int t;
-    int h = srcImage->height;
-    int baseRows = h / NUM_THREADS;
-    int remainder = h % NUM_THREADS;
-    int row = 0;
-
-    for (t = 0; t < NUM_THREADS; t++) {
-        int rowsThisThread = baseRows + (t < remainder ? 1 : 0);
-        args[t].srcImage = srcImage;
-        args[t].destImage = destImage;
-        memcpy(args[t].algorithm, algorithm, sizeof(Matrix));
-        args[t].startRow = row;
-        args[t].endRow = row + rowsThisThread;
-        row = args[t].endRow;
-        pthread_create(&threads[t], NULL, convolute_worker, &args[t]);
-    }
-    for (t = 0; t < NUM_THREADS; t++) {
-        pthread_join(threads[t], NULL);
+    int row,pix,bit,span;
+    span=srcImage->bpp*srcImage->bpp;
+#pragma omp parallel for private(pix, bit)
+    for (row=0;row<srcImage->height;row++){
+        for (pix=0;pix<srcImage->width;pix++){
+            for (bit=0;bit<srcImage->bpp;bit++){
+                destImage->data[Index(pix,row,srcImage->width,bit,srcImage->bpp)]=getPixelValue(srcImage,pix,row,bit,algorithm);
+            }
+        }
     }
 }
 
